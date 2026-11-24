@@ -3,7 +3,7 @@
 **Proyecto:** Plataforma de Ahorro Energético Comunitario (ODS 7)
 **Backend:** Supabase (PostgreSQL + Auth + RLS + funciones RPC)
 **Clientes:** Sitio web (Next.js) y App móvil (React Native · Expo · TypeScript)
-**Versión del contrato:** 1.1 (Fase 2: registro con comunidad nueva)
+**Versión del contrato:** 1.2 (Fase 3: módulos portables entregados)
 
 > Regla de oro: **la app móvil nunca calcula puntos, insignias, niveles, ahorro de retos ni rankings.**
 > Todo eso lo hace la base de datos. El móvil solo lee tablas (con RLS) y llama `supabase.rpc(...)`.
@@ -530,17 +530,38 @@ const { data: stats } = await supabase.rpc('get_community_stats', { p_community_
 
 ---
 
-## 9. Archivos compartidos (llegan en fases posteriores)
+## 9. Archivos compartidos (código portable)
 
-| Archivo | Fase | Contenido | Dependencias |
+| Archivo | Estado | Contenido | Dependencias |
 |---|---|---|---|
-| `types/database.ts` | 3 | Tipos de todas las tablas, enums y respuestas RPC | Ninguna |
-| `lib/energyCalculations.ts` | 3 | Fórmulas puras de kWh, costo y CO2 (las mismas de la sección 7.1) | Ninguna |
-| `lib/recommendations.ts` | 4 | Motor de recomendaciones personalizadas | Solo los dos anteriores |
+| `types/database.ts` | ✅ Fase 3 | Tipos de todas las tablas, enums (como uniones y arreglos), respuestas RPC y `RpcFunctions` | Ninguna |
+| `lib/energyCalculations.ts` | ✅ Fase 3 | Fórmulas de kWh, costo, CO2, desglose por aparato/categoría, ahorro antes/después, validación de aparatos | Solo tipos de `../types/database` |
+| `lib/rpc.ts` | ✅ Fase 3 | `callRpc(supabase, nombre, args)` con tipos de argumentos y respuesta | `@supabase/supabase-js` (tipo) |
+| `lib/recommendations.ts` | ⏳ Fase 4 | Motor de recomendaciones personalizadas | Los anteriores |
 
-Son TypeScript puro (sin imports de Next.js, React ni del navegador): se copian tal cual a la carpeta del proyecto Expo.
+Cómo usarlos en Expo:
 
----
+1. Copia `types/` y `lib/energyCalculations.ts` + `lib/rpc.ts` respetando la estructura (los imports son **relativos**, `../types/database`, así que no necesitas configurar alias).
+2. Ejemplo:
+
+```ts
+import { calculateTotals, breakdownByCategory, validateAppliance } from './lib/energyCalculations';
+import { callRpc } from './lib/rpc';
+import type { Appliance, Category } from './types/database';
+
+const totals = calculateTotals(appliances, profile.tariff_per_kwh, settings.co2_kg_per_kwh);
+totals.kwh.mensual;   // kWh al mes
+totals.cost.anual;    // $ al año
+totals.co2Kg.diario;  // kg CO2 al día
+
+const check = validateAppliance(formValues, categories.map(c => c.slug));
+if (check.ok) await supabase.from('appliances').insert(check.data);
+else setErrors(check.errors);
+
+const { data: gamification } = await callRpc(supabase, 'get_my_gamification');
+```
+
+Las fórmulas se verificaron contra PostgreSQL con 4 296 comparaciones (0 diferencias): la app, la web y las RPC muestran exactamente los mismos números.
 
 ## 10. Preparado para medidores inteligentes (futuro)
 

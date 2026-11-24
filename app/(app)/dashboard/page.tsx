@@ -6,30 +6,10 @@ import { Alert } from "@/components/ui/Alert";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { requireProfile } from "@/lib/auth";
 import { ACCOUNT_TYPE_LABELS, formatCurrency, formatNumber } from "@/lib/format";
+import { callRpc } from "@/lib/rpc";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "Panel" };
-
-interface GamificationBadge {
-  code: string;
-  name: string;
-  description: string;
-  icon: string | null;
-  earned: boolean;
-  awarded_at: string | null;
-}
-
-interface Gamification {
-  points: number;
-  level: number;
-  level_name: string | null;
-  current_level_min: number | null;
-  next_level_min: number | null;
-  streak_weeks: number;
-  completed_challenges: number;
-  total_savings_kwh: number;
-  badges: GamificationBadge[];
-}
 
 export default async function DashboardPage(props: PageProps<"/dashboard">) {
   const searchParams = await props.searchParams;
@@ -37,12 +17,12 @@ export default async function DashboardPage(props: PageProps<"/dashboard">) {
   const supabase = await createClient();
 
   const [gamificationRes, appliancesRes, participationsRes] = await Promise.all([
-    supabase.rpc("get_my_gamification"),
+    callRpc(supabase, "get_my_gamification"),
     supabase.from("appliances").select("id", { count: "exact", head: true }),
     supabase.from("challenge_participations").select("id", { count: "exact", head: true }),
   ]);
 
-  const g = (gamificationRes.data ?? null) as Gamification | null;
+  const g = gamificationRes.data;
   const applianceCount = appliancesRes.count ?? 0;
   const participationCount = participationsRes.count ?? 0;
 

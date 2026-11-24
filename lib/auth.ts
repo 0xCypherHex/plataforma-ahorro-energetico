@@ -1,18 +1,12 @@
 // Capa de acceso a la sesión (solo servidor).
 // Úsala en layouts, páginas y Server Actions para obtener el usuario y su perfil.
-// En la Fase 3 estos tipos se moverán a types/database.ts.
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import type { AccountType, Community, UserRole } from "@/types/database";
 
-export type AccountType = "hogar" | "negocio";
-export type UserRole = "user" | "admin";
-
-export interface CommunitySummary {
-  id: string;
-  name: string;
-  municipality: string | null;
-}
+export type { AccountType, UserRole };
+export type CommunitySummary = Pick<Community, "id" | "name" | "municipality">;
 
 export interface CurrentProfile {
   id: string;

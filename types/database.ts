@@ -262,6 +262,8 @@ export interface ChallengeParticipation {
   target_met: boolean | null;
   points_awarded: number;
   completed_at: TimestampString | null;
+  /** Categoría de aparatos que mide esta participación (null = todo el hogar). Se fija al unirse. */
+  measured_category_slug: CategorySlug | null;
   verification_source: VerificationSource;
   meter_reading_start_kwh: number | null;
   meter_reading_kwh: number | null;

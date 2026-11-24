@@ -3,7 +3,7 @@
 **Proyecto:** Plataforma de Ahorro Energético Comunitario (ODS 7)
 **Backend:** Supabase (PostgreSQL + Auth + RLS + funciones RPC)
 **Clientes:** Sitio web (Next.js) y App móvil (React Native · Expo · TypeScript)
-**Versión del contrato:** 1.3 (Fase 4: recomendaciones y validación de hábitos)
+**Versión del contrato:** 1.4 (Fase 5: cada reto mide solo su categoría — migración 003)
 
 > Regla de oro: **la app móvil nunca calcula puntos, insignias, niveles, ahorro de retos ni rankings.**
 > Todo eso lo hace la base de datos. El móvil solo lee tablas (con RLS) y llama `supabase.rpc(...)`.
@@ -274,6 +274,7 @@ Para la lista de retos usa la RPC `get_active_challenges()` (ya trae tu estado),
 | `joined_at` | timestamptz | |
 | `baseline_weekly_kwh` | numeric | consumo estimado **ANTES** (al unirse) |
 | `final_weekly_kwh` | numeric \| null | consumo estimado **DESPUÉS** (al completar) |
+| `measured_category_slug` | text \| null | categoría de aparatos que mide (la del reto al unirse; `null` = todo el hogar) |
 | `savings_kwh` | numeric \| null | `baseline − final` (negativo = consumió más) |
 | `savings_pct` | numeric \| null | |
 | `savings_cost` | numeric \| null | MXN |
@@ -366,7 +367,8 @@ Respuesta de `complete_challenge`:
 ```
 
 **Flujo de verificación (manual / aproximada):**
-1. `join_challenge` guarda el consumo semanal estimado actual como **ANTES**.
+0. **Cada reto mide solo los aparatos de su categoría** (`challenges.category_slug`); si el reto no tiene categoría, mide todo el hogar. La categoría se congela en `measured_category_slug` al unirse. Así, con varios retos simultáneos, el mismo ahorro no se cuenta dos veces. Para mostrar el "Ahora" en la app, suma con `totalWeeklyKwh` solo los aparatos de esa categoría.
+1. `join_challenge` guarda el consumo semanal estimado actual (de esa categoría) como **ANTES**.
 2. Durante la semana el usuario cambia sus hábitos y **actualiza sus aparatos** (horas, días, cantidad o potencia) y registra avances con `log_challenge_progress`.
 3. `complete_challenge` recalcula el consumo con los aparatos actuales (**DESPUÉS**) y compara.
 4. La app **debe mostrar un aviso** de que la verificación es aproximada y depende de los datos que ingresa el usuario.
@@ -419,7 +421,7 @@ Los errores de negocio llegan en `error.message` en español, listos para mostra
 
 | `error.code` | Ejemplos de `error.message` |
 |---|---|
-| `P0001` | "Registra al menos un aparato antes de unirte a un reto" · "Ya participas en este reto" · "Este reto no está abierto esta semana" · "El plazo para completar este reto ya terminó" · "Solo puedes registrar avances en retos activos" · "El aparato indicado no pertenece a tu cuenta" |
+| `P0001` | "Registra al menos un aparato antes de unirte a un reto" · "Este reto mide tus aparatos de Iluminación. Registra al menos uno de esa categoría para unirte." · "Ya participas en este reto" · "Este reto no está abierto esta semana" · "El plazo para completar este reto ya terminó" · "Solo puedes registrar avances en retos activos" · "El aparato indicado no pertenece a tu cuenta" |
 | `28000` | "Debes iniciar sesión" |
 | `42501` | "Solo administradores" / permiso denegado al editar columnas 🔒 |
 | `23505` | Registro duplicado (p. ej. comunidad ya existente) |

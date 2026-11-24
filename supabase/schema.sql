@@ -247,6 +247,7 @@ create table public.challenge_participations (
   points_awarded           integer not null default 0,
   completed_at             timestamptz,
   -- Preparado para integración futura con medidores / enchufes inteligentes:
+  measured_category_slug   text,                            -- categoría medida (null = todo el hogar), ver migración 003
   verification_source      public.verification_source not null default 'manual',
   meter_reading_start_kwh  numeric(14,3) check (meter_reading_start_kwh >= 0),
   meter_reading_kwh        numeric(14,3) check (meter_reading_kwh >= 0),
@@ -344,6 +345,15 @@ returns numeric language sql stable set search_path = public, pg_temp as $$
   select coalesce(sum(a.watts * a.quantity * a.hours_per_day * a.days_per_week) / 1000.0, 0)::numeric
   from public.appliances a
   where a.user_id = p_user_id;
+$$;
+
+-- kWh por SEMANA filtrados por categoría (null = todo el hogar). Ver migración 003.
+create or replace function public.calc_user_weekly_kwh(p_user_id uuid, p_category_slug text)
+returns numeric language sql stable set search_path = public, pg_temp as $$
+  select coalesce(sum(a.watts * a.quantity * a.hours_per_day * a.days_per_week) / 1000.0, 0)::numeric
+  from public.appliances a
+  where a.user_id = p_user_id
+    and (p_category_slug is null or a.category_slug = p_category_slug);
 $$;
 
 create or replace function public.level_for_points(p_points integer)
@@ -738,9 +748,16 @@ begin
     raise exception 'Este reto no está abierto esta semana' using errcode = 'P0001';
   end if;
 
-  v_baseline := public.calc_user_weekly_kwh(v_uid);
+  -- El reto mide solo los aparatos de su categoría (o todo el hogar si no tiene categoría)
+  v_baseline := public.calc_user_weekly_kwh(v_uid, v_ch.category_slug);
   if v_baseline <= 0 then
-    raise exception 'Registra al menos un aparato antes de unirte a un reto' using errcode = 'P0001';
+    if v_ch.category_slug is null then
+      raise exception 'Registra al menos un aparato antes de unirte a un reto' using errcode = 'P0001';
+    else
+      raise exception 'Este reto mide tus aparatos de %. Registra al menos uno de esa categoría para unirte.',
+        coalesce((select c.name from public.categories c where c.slug = v_ch.category_slug), v_ch.category_slug)
+        using errcode = 'P0001';
+    end if;
   end if;
 
   select * into v_existing from public.challenge_participations cp
@@ -752,13 +769,14 @@ begin
     end if;
     update public.challenge_participations cp
        set status = 'activo', joined_at = now(), baseline_weekly_kwh = v_baseline,
+           measured_category_slug = v_ch.category_slug,
            final_weekly_kwh = null, savings_kwh = null, savings_pct = null, savings_cost = null,
            savings_co2_kg = null, target_met = null, completed_at = null
      where cp.id = v_existing.id
     returning * into v_row;
   else
-    insert into public.challenge_participations (user_id, challenge_id, baseline_weekly_kwh)
-    values (v_uid, p_challenge_id, v_baseline)
+    insert into public.challenge_participations (user_id, challenge_id, baseline_weekly_kwh, measured_category_slug)
+    values (v_uid, p_challenge_id, v_baseline, v_ch.category_slug)
     returning * into v_row;
   end if;
 
@@ -858,8 +876,8 @@ begin
     raise exception 'El plazo para completar este reto ya terminó' using errcode = 'P0001';
   end if;
 
-  -- Consumo DESPUÉS (estimado con los aparatos tal como están ahora)
-  v_final   := public.calc_user_weekly_kwh(v_uid);
+  -- Consumo DESPUÉS (estimado con los aparatos de la MISMA categoría medida al unirse)
+  v_final   := public.calc_user_weekly_kwh(v_uid, v_part.measured_category_slug);
   v_savings := v_part.baseline_weekly_kwh - v_final;
   v_pct     := case when v_part.baseline_weekly_kwh > 0
                     then round(v_savings / v_part.baseline_weekly_kwh * 100, 2) else 0 end;
@@ -1337,6 +1355,7 @@ grant execute on function public.join_challenge(uuid)                           
 grant execute on function public.log_challenge_progress(uuid, text, numeric)        to authenticated;
 grant execute on function public.complete_challenge(uuid, numeric, text)            to authenticated;
 grant execute on function public.abandon_challenge(uuid)                            to authenticated;
+revoke execute on function public.calc_user_weekly_kwh(uuid, text) from public, anon, authenticated;
 grant execute on function public.get_my_gamification()                              to authenticated;
 grant execute on function public.get_my_savings_history(integer)                    to authenticated;
 grant execute on function public.get_leaderboard(text, integer, integer)            to authenticated;

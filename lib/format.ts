@@ -22,3 +22,16 @@ export const ROLE_LABELS = {
   user: "Usuario",
   admin: "Administrador",
 } as const;
+
+export const POINTS_REASON_LABELS = {
+  reto_completado: "Reto completado",
+  avance_registrado: "Avance de reto",
+  habito_registrado: "Registro de hábitos",
+  insignia: "Insignia obtenida",
+  racha: "Bono por racha",
+  ajuste_admin: "Ajuste del administrador",
+} as const;
+
+export function formatPercent(value: number | null | undefined, decimals = 1) {
+  return `${formatNumber(value ?? 0, decimals)} %`;
+}

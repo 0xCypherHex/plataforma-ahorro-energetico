@@ -458,6 +458,7 @@ end $$;
 -- -----------------------------------------------------------------------------
 
 -- 11.1 Crear perfil automáticamente al registrarse (lee options.data del signUp)
+--      Acepta community_id o new_community_name (+ new_community_municipality). Ver migración 002.
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -466,13 +467,41 @@ declare
   v_comm      uuid;
   v_tariff    numeric;
   v_settings  public.app_settings%rowtype;
+  v_new_name  text := nullif(btrim(coalesce(v_meta->>'new_community_name', '')), '');
+  v_new_muni  text := nullif(btrim(coalesce(v_meta->>'new_community_municipality', '')), '');
 begin
   if v_meta->>'account_type' in ('hogar', 'negocio') then
     v_type := (v_meta->>'account_type')::public.account_type;
   end if;
 
+  -- 1) Comunidad existente
   if coalesce(v_meta->>'community_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
     select c.id into v_comm from public.communities c where c.id = (v_meta->>'community_id')::uuid;
+  end if;
+
+  -- 2) Comunidad nueva (si no se eligió una existente)
+  if v_comm is null and v_new_name is not null and char_length(v_new_name) between 2 and 120 then
+    v_new_muni := left(v_new_muni, 120);
+    select c.id into v_comm
+      from public.communities c
+     where lower(c.name) = lower(v_new_name)
+       and lower(coalesce(c.municipality, '')) = lower(coalesce(v_new_muni, ''))
+     limit 1;
+
+    if v_comm is null then
+      insert into public.communities (name, municipality, created_by)
+      values (v_new_name, v_new_muni, new.id)
+      on conflict do nothing
+      returning id into v_comm;
+
+      if v_comm is null then  -- otra inserción simultánea ganó la carrera
+        select c.id into v_comm
+          from public.communities c
+         where lower(c.name) = lower(v_new_name)
+           and lower(coalesce(c.municipality, '')) = lower(coalesce(v_new_muni, ''))
+         limit 1;
+      end if;
+    end if;
   end if;
 
   select * into v_settings from public.app_settings where id = 1;

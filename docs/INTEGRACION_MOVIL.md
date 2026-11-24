@@ -3,7 +3,7 @@
 **Proyecto:** Plataforma de Ahorro Energético Comunitario (ODS 7)
 **Backend:** Supabase (PostgreSQL + Auth + RLS + funciones RPC)
 **Clientes:** Sitio web (Next.js) y App móvil (React Native · Expo · TypeScript)
-**Versión del contrato:** 1.0 (Fase 1)
+**Versión del contrato:** 1.1 (Fase 2: registro con comunidad nueva)
 
 > Regla de oro: **la app móvil nunca calcula puntos, insignias, niveles, ahorro de retos ni rankings.**
 > Todo eso lo hace la base de datos. El móvil solo lee tablas (con RLS) y llama `supabase.rpc(...)`.
@@ -82,12 +82,16 @@ const { data, error } = await supabase.auth.signUp({
     data: {
       full_name: 'Ana López',          // string, máx. 120
       account_type: 'hogar',           // 'hogar' | 'negocio'   (si falta o es inválido → 'hogar')
-      community_id: 'uuid-opcional',   // uuid de communities.id o se omite
+      // Comunidad: usa UNA de estas dos opciones (o ninguna)
+      community_id: 'uuid-opcional',              // unirse a una comunidad existente
+      // new_community_name: 'Col. Las Américas', // crear una nueva (2–120 caracteres)
+      // new_community_municipality: 'Ecatepec',  // opcional, junto con la anterior
     },
   },
 });
 ```
 
+- Si envías `new_community_name`, el trigger **crea la comunidad** o, si ya existe una con el mismo nombre y municipio (sin distinguir mayúsculas), **reutiliza la existente**. `community_id` tiene prioridad si se envían ambos.
 - La tarifa inicial se asigna sola: `app_settings.default_tariff_hogar` (1.20 MXN/kWh) o `default_tariff_negocio` (4.00 MXN/kWh). El usuario la ajusta después con su recibo.
 - El rol **siempre** nace como `'user'`. Un usuario **no** puede hacerse admin desde la app.
 - La lista de comunidades (`communities`) se puede leer **sin sesión** para mostrar el selector en la pantalla de registro.

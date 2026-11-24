@@ -14,7 +14,8 @@
  *
  *   · Redondeo igual que las RPC: kWh a 3 decimales, dinero a 2, CO2 a 3.
  */
-import type { Appliance, ApplianceInsert, Category, HabitLog, HabitType, Period } from "../types/database";
+import { HABIT_TYPES } from "../types/database";
+import type { Appliance, ApplianceInsert, Category, HabitLog, HabitLogInsert, HabitType, Period } from "../types/database";
 
 // ---------------------------------------------------------------------------
 // Constantes
@@ -46,6 +47,24 @@ export const APPLIANCE_LIMITS = {
   hoursMax: 24,
   daysMin: 0,
   daysMax: 7,
+} as const;
+
+export const HABIT_LABELS: Record<HabitType, string> = {
+  luces_sin_necesidad: "Luces encendidas sin necesidad",
+  dispositivos_standby: "Aparatos conectados sin usarse (standby)",
+  uso_aparato: "Tiempo real de uso de un aparato",
+};
+
+/** Límites iguales a los CHECK de la tabla `habit_logs`. */
+export const HABIT_LIMITS = {
+  itemCountMin: 1,
+  itemCountMax: 500,
+  wattsMax: 20000,
+  hoursMin: 0,
+  hoursMax: 24,
+  daysMin: 1,
+  daysMax: 7,
+  notesMax: 500,
 } as const;
 
 export const PERIOD_LABELS: Record<Period, string> = {
@@ -328,6 +347,72 @@ export function validateAppliance(values: ApplianceFormValues, validCategorySlug
       hours_per_day: round(hours, 2),
       days_per_week: days,
       catalog_id: values.catalog_id ? values.catalog_id : null,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Validación de un registro de hábito (mismos límites que la BD)
+// ---------------------------------------------------------------------------
+export interface HabitFormValues {
+  habit_type: string;
+  log_date?: string;
+  appliance_id?: string | null;
+  item_count: string | number;
+  watts_per_item?: string | number | null;
+  hours_per_day: string | number;
+  days_per_week: string | number;
+  notes?: string | null;
+}
+
+export type HabitValidation =
+  | { ok: true; data: HabitLogInsert }
+  | { ok: false; errors: Partial<Record<keyof HabitFormValues, string>> };
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Valida un hábito. `ownApplianceIds` = ids de los aparatos del usuario (para "uso_aparato"). */
+export function validateHabit(values: HabitFormValues, ownApplianceIds: string[] = []): HabitValidation {
+  const L = HABIT_LIMITS;
+  const errors: Partial<Record<keyof HabitFormValues, string>> = {};
+  const type = String(values.habit_type ?? "") as HabitType;
+  const isUsage = type === "uso_aparato";
+  const count = isUsage ? 1 : parseDecimal(values.item_count);
+  const hours = parseDecimal(values.hours_per_day);
+  const days = parseDecimal(values.days_per_week);
+  const wattsRaw = values.watts_per_item;
+  const watts = wattsRaw === null || wattsRaw === undefined || String(wattsRaw).trim() === "" ? null : parseDecimal(wattsRaw);
+  const applianceId = values.appliance_id ? String(values.appliance_id) : null;
+  const logDate = values.log_date ? String(values.log_date) : undefined;
+  const notes = values.notes ? String(values.notes).trim() : "";
+
+  if (!(HABIT_TYPES as readonly string[]).includes(type)) errors.habit_type = "Elige el tipo de hábito.";
+  if (!Number.isInteger(count) || count < L.itemCountMin || count > L.itemCountMax)
+    errors.item_count = `Escribe un número entero entre ${L.itemCountMin} y ${L.itemCountMax}.`;
+  if (!Number.isFinite(hours) || hours <= L.hoursMin || hours > L.hoursMax)
+    errors.hours_per_day = "Las horas deben ser mayores a 0 y máximo 24.";
+  if (!Number.isInteger(days) || days < L.daysMin || days > L.daysMax)
+    errors.days_per_week = "Elige de 1 a 7 días por semana.";
+  if (watts !== null && (!Number.isFinite(watts) || watts < 0 || watts > L.wattsMax))
+    errors.watts_per_item = "La potencia debe estar entre 0 y 20 000 W.";
+  if (isUsage && (!applianceId || !ownApplianceIds.includes(applianceId)))
+    errors.appliance_id = "Elige uno de tus aparatos.";
+  if (logDate !== undefined && !DATE_RE.test(logDate)) errors.log_date = "Fecha no válida.";
+  if (notes.length > L.notesMax) errors.notes = `Máximo ${L.notesMax} caracteres.`;
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+
+  return {
+    ok: true,
+    data: {
+      habit_type: type,
+      ...(logDate ? { log_date: logDate } : {}),
+      appliance_id: isUsage ? applianceId : null,
+      item_count: count,
+      watts_per_item: watts === null ? null : round(watts, 2),
+      hours_per_day: round(hours, 2),
+      days_per_week: days,
+      notes: notes || null,
     },
   };
 }

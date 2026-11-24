@@ -1,11 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, Award, CircleCheck, Circle, Flame, Star } from "lucide-react";
+import { ConsumptionBreakdownCharts } from "@/components/charts/ConsumptionBreakdownCharts";
+import { ConsumptionHistoryChart, type HistoryPoint } from "@/components/charts/ConsumptionHistoryChart";
+import { WeeklyBarChart } from "@/components/charts/WeeklyBarChart";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { RecommendationList } from "@/components/recommendations/RecommendationList";
 import { Alert } from "@/components/ui/Alert";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { requireProfile } from "@/lib/auth";
+import { getCategories, getCo2Factor, getMyAppliances } from "@/lib/data/appliances";
+import { getCommunityStats, getMySavingsHistory, getMySnapshots } from "@/lib/data/dashboard";
+import { getMyHabits } from "@/lib/data/habits";
+import { addDays, todayIn } from "@/lib/dates";
+import { calculateTotals } from "@/lib/energyCalculations";
 import { ACCOUNT_TYPE_LABELS, formatCurrency, formatNumber } from "@/lib/format";
+import { generateRecommendations, summarizeRecommendations } from "@/lib/recommendations";
 import { callRpc } from "@/lib/rpc";
 import { createClient } from "@/lib/supabase/server";
 
@@ -16,14 +26,46 @@ export default async function DashboardPage(props: PageProps<"/dashboard">) {
   const profile = await requireProfile();
   const supabase = await createClient();
 
-  const [gamificationRes, appliancesRes, participationsRes] = await Promise.all([
-    callRpc(supabase, "get_my_gamification"),
-    supabase.from("appliances").select("id", { count: "exact", head: true }),
-    supabase.from("challenge_participations").select("id", { count: "exact", head: true }),
-  ]);
+  const today = todayIn();
+
+  const [gamificationRes, participationsRes, appliances, categories, co2Factor, habits, snapshots, savingsHistory, community] =
+    await Promise.all([
+      callRpc(supabase, "get_my_gamification"),
+      supabase.from("challenge_participations").select("id", { count: "exact", head: true }),
+      getMyAppliances(profile.id),
+      getCategories(),
+      getCo2Factor(),
+      getMyHabits(profile.id, addDays(today, -30)),
+      getMySnapshots(profile.id, addDays(today, -90)),
+      getMySavingsHistory(12),
+      getCommunityStats(profile.community_id),
+    ]);
 
   const g = gamificationRes.data;
-  const applianceCount = appliancesRes.count ?? 0;
+  const applianceCount = appliances.length;
+  const totals = calculateTotals(appliances, profile.tariff_per_kwh, co2Factor);
+  const recommendations = generateRecommendations({
+    appliances,
+    habits,
+    tariffPerKwh: profile.tariff_per_kwh,
+    co2KgPerKwh: co2Factor,
+    accountType: profile.account_type,
+    today,
+    limit: 12,
+  });
+  const potential = summarizeRecommendations(recommendations);
+
+  // Historial escalonado: se extiende hasta hoy con el último valor conocido
+  const history: HistoryPoint[] = snapshots.map((s) => ({
+    date: s.snapshot_date,
+    monthlyKwh: s.monthly_kwh,
+    monthlyCost: s.monthly_cost,
+    applianceCount: s.appliance_count,
+  }));
+  const last = history.at(-1);
+  if (last && last.date < today) history.push({ ...last, date: today });
+
+  const savingsTotal = savingsHistory.reduce((sum, w) => sum + w.savings_kwh, 0);
   const participationCount = participationsRes.count ?? 0;
 
   const points = g?.points ?? profile.points;
@@ -180,6 +222,145 @@ export default async function DashboardPage(props: PageProps<"/dashboard">) {
           <Link href="/perfil" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-emerald-700 hover:underline">
             Editar perfil <ArrowRight className="size-4" aria-hidden />
           </Link>
+        </Card>
+      </div>
+
+      {/* Consumo */}
+      <Card className="mt-4">
+        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+          <CardTitle>Tu consumo estimado</CardTitle>
+          {applianceCount > 0 && (
+            <p className="text-sm text-slate-600">
+              {formatNumber(totals.kwh.mensual)} kWh · {formatCurrency(totals.cost.mensual)} · {formatNumber(totals.co2Kg.mensual)} kg
+              CO₂ al mes
+            </p>
+          )}
+        </div>
+        {applianceCount > 0 ? (
+          <ConsumptionBreakdownCharts
+            appliances={appliances}
+            categories={categories}
+            tariff={profile.tariff_per_kwh}
+            co2Factor={co2Factor}
+          />
+        ) : (
+          <p className="py-6 text-center text-sm text-slate-600">
+            <Link href="/aparatos/nuevo" className="font-semibold text-emerald-700 hover:underline">
+              Registra tus aparatos
+            </Link>{" "}
+            para ver tus gráficas de consumo.
+          </p>
+        )}
+      </Card>
+
+      {/* Evolución */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardTitle>Evolución de tu consumo mensual</CardTitle>
+          <p className="mb-3 text-xs text-slate-500">Últimos 90 días · cambia cuando editas tus aparatos o tu tarifa</p>
+          <ConsumptionHistoryChart data={history} />
+        </Card>
+        <Card>
+          <CardTitle>Ahorro semanal en retos</CardTitle>
+          <p className="mb-3 text-xs text-slate-500">
+            Últimas 12 semanas · total {formatNumber(savingsTotal)} kWh
+          </p>
+          {savingsTotal > 0 ? (
+            <WeeklyBarChart
+              ariaLabel="kWh ahorrados por semana en retos"
+              unitLabel="kWh"
+              data={savingsHistory.map((w) => ({
+                weekStart: w.week_start,
+                value: w.savings_kwh,
+                details: [
+                  formatCurrency(w.savings_cost),
+                  `${formatNumber(w.savings_co2_kg)} kg CO₂ evitados`,
+                  `${w.completed_challenges} ${w.completed_challenges === 1 ? "reto completado" : "retos completados"}`,
+                ],
+              }))}
+            />
+          ) : (
+            <p className="py-10 text-center text-sm text-slate-500">
+              Completa tu primer{" "}
+              <Link href="/retos" className="font-semibold text-emerald-700 hover:underline">
+                reto semanal
+              </Link>{" "}
+              para ver aquí la evolución de tu ahorro.
+            </p>
+          )}
+        </Card>
+      </div>
+
+      {/* Recomendaciones y comunidad */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <div className="flex items-baseline justify-between gap-2">
+            <CardTitle>Recomendaciones para ti</CardTitle>
+            <Link href="/habitos#recomendaciones" className="text-sm font-semibold text-emerald-700 hover:underline">
+              Ver todas
+            </Link>
+          </div>
+          {potential.costMonth > 0 && (
+            <p className="mt-1 text-sm text-slate-600">
+              Podrías ahorrar hasta <strong className="text-slate-900">{formatCurrency(potential.costMonth)} al mes</strong> sin
+              invertir.
+            </p>
+          )}
+          <div className="mt-2">
+            <RecommendationList
+              items={[
+                ...recommendations.filter((r) => r.effort !== "inversion"),
+                ...recommendations.filter((r) => r.effort === "inversion"),
+              ].slice(0, 3)}
+              compact
+            />
+          </div>
+        </Card>
+
+        <Card>
+          <CardTitle>{community?.community_name ? `Comunidad: ${community.community_name}` : "Toda la plataforma"}</CardTitle>
+          {community ? (
+            <>
+              <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-xl bg-slate-50 p-2">
+                  <dt className="text-xs text-slate-500">Participantes activos</dt>
+                  <dd className="text-lg font-bold text-slate-900">{formatNumber(community.active_participants, 0)}</dd>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-2">
+                  <dt className="text-xs text-slate-500">kWh ahorrados</dt>
+                  <dd className="text-lg font-bold text-slate-900">{formatNumber(community.total_savings_kwh, 1)}</dd>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-2">
+                  <dt className="text-xs text-slate-500">CO₂ evitado</dt>
+                  <dd className="text-lg font-bold text-slate-900">{formatNumber(community.total_savings_co2_kg, 1)} kg</dd>
+                </div>
+              </dl>
+              <div className="mt-4">
+                <WeeklyBarChart
+                  ariaLabel="kWh ahorrados por semana en la comunidad"
+                  unitLabel="kWh"
+                  data={community.weekly_series.map((w) => ({
+                    weekStart: w.week_start,
+                    value: Number(w.savings_kwh),
+                    details: [
+                      formatCurrency(Number(w.savings_cost)),
+                      `${w.participants} ${w.participants === 1 ? "participante" : "participantes"}`,
+                    ],
+                  }))}
+                />
+              </div>
+              {!profile.community_id && (
+                <p className="mt-2 text-xs text-slate-500">
+                  <Link href="/perfil" className="font-semibold text-emerald-700 hover:underline">
+                    Elige tu comunidad
+                  </Link>{" "}
+                  para ver solo a tus vecinos.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-slate-600">No pudimos cargar las estadísticas de la comunidad.</p>
+          )}
         </Card>
       </div>
     </>

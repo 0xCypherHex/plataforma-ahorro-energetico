@@ -3,7 +3,7 @@
 **Proyecto:** Plataforma de Ahorro Energético Comunitario (ODS 7)
 **Backend:** Supabase (PostgreSQL + Auth + RLS + funciones RPC)
 **Clientes:** Sitio web (Next.js) y App móvil (React Native · Expo · TypeScript)
-**Versión del contrato:** 1.2 (Fase 3: módulos portables entregados)
+**Versión del contrato:** 1.3 (Fase 4: recomendaciones y validación de hábitos)
 
 > Regla de oro: **la app móvil nunca calcula puntos, insignias, niveles, ahorro de retos ni rankings.**
 > Todo eso lo hace la base de datos. El móvil solo lee tablas (con RLS) y llama `supabase.rpc(...)`.
@@ -535,9 +535,10 @@ const { data: stats } = await supabase.rpc('get_community_stats', { p_community_
 | Archivo | Estado | Contenido | Dependencias |
 |---|---|---|---|
 | `types/database.ts` | ✅ Fase 3 | Tipos de todas las tablas, enums (como uniones y arreglos), respuestas RPC y `RpcFunctions` | Ninguna |
-| `lib/energyCalculations.ts` | ✅ Fase 3 | Fórmulas de kWh, costo, CO2, desglose por aparato/categoría, ahorro antes/después, validación de aparatos | Solo tipos de `../types/database` |
+| `lib/energyCalculations.ts` | ✅ Fase 3 · actualizado en Fase 4 | Fórmulas de kWh, costo, CO2, desglose por aparato/categoría, ahorro antes/después, validación de aparatos **y de hábitos** (`validateHabit`, `HABIT_LABELS`, `HABIT_LIMITS`) | `../types/database` |
 | `lib/rpc.ts` | ✅ Fase 3 | `callRpc(supabase, nombre, args)` con tipos de argumentos y respuesta | `@supabase/supabase-js` (tipo) |
-| `lib/recommendations.ts` | ⏳ Fase 4 | Motor de recomendaciones personalizadas | Los anteriores |
+| `lib/recommendations.ts` | ✅ Fase 4 | `generateRecommendations({ appliances, habits, tariffPerKwh, co2KgPerKwh, accountType, today })` y `summarizeRecommendations(recs)`. Cada recomendación trae título, descripción, acciones, prioridad, esfuerzo y ahorro mensual en kWh, $ y CO2 | `./energyCalculations`, `../types/database` |
+| `lib/dates.ts` | ✅ Fase 4 | `todayIn()` (fecha de hoy en America/Mexico_City, igual que `app_today()`), `addDays`, `formatDate` | Ninguna |
 
 Cómo usarlos en Expo:
 
@@ -559,7 +560,19 @@ if (check.ok) await supabase.from('appliances').insert(check.data);
 else setErrors(check.errors);
 
 const { data: gamification } = await callRpc(supabase, 'get_my_gamification');
+
+// Recomendaciones (mismas que en la web)
+import { generateRecommendations, summarizeRecommendations } from './lib/recommendations';
+import { todayIn, addDays } from './lib/dates';
+const { data: habits } = await supabase.from('habit_logs').select('*').gte('log_date', addDays(todayIn(), -30));
+const recs = generateRecommendations({
+  appliances, habits: habits ?? [], tariffPerKwh: profile.tariff_per_kwh,
+  co2KgPerKwh: settings.co2_kg_per_kwh, accountType: profile.account_type, today: todayIn(),
+});
+const potencial = summarizeRecommendations(recs); // { count, kwhMonth, costMonth, co2MonthKg }
 ```
+
+> **Gráficas en móvil:** Recharts es solo para web. Para Expo se recomienda `victory-native` o `react-native-gifted-charts`; los datos salen de las mismas funciones (`breakdownByCategory`, `breakdownByAppliance`, `consumption_snapshots`, RPC `get_my_savings_history` y `get_community_stats.weekly_series`).
 
 Las fórmulas se verificaron contra PostgreSQL con 4 296 comparaciones (0 diferencias): la app, la web y las RPC muestran exactamente los mismos números.
 

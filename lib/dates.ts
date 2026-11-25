@@ -17,3 +17,21 @@ export function addDays(date: string, days: number): string {
 export function formatDate(date: string, options: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" }) {
   return new Date(`${date}T12:00:00Z`).toLocaleDateString("es-MX", { timeZone: "UTC", ...options });
 }
+
+/** Lunes de la semana (ISO) a la que pertenece una fecha 'YYYY-MM-DD' (igual que week_start_of() en SQL). */
+export function weekStartOf(date: string): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  const isoDow = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+  return addDays(date, -(isoDow - 1));
+}
+
+/** ¿La fecha 'YYYY-MM-DD' es lunes? */
+export function isMonday(date: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && new Date(`${date}T12:00:00Z`).getUTCDay() === 1;
+}
+
+/** Lunes desde `weeksBack` semanas atrás hasta `weeksAhead` semanas adelante. */
+export function mondaysAround(today: string, weeksBack = 1, weeksAhead = 8): string[] {
+  const current = weekStartOf(today);
+  return Array.from({ length: weeksBack + weeksAhead + 1 }, (_, i) => addDays(current, (i - weeksBack) * 7));
+}
